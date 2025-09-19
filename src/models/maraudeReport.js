@@ -1,3 +1,4 @@
+// src/models/maraudeReport.js - Simplified version without removed fields
 module.exports = (sequelize, DataTypes) => {
   const MaraudeReport = sequelize.define('MaraudeReport', {
     id: {
@@ -28,18 +29,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TIME,
       allowNull: false
     },
-    weatherConditions: {
-      type: DataTypes.ENUM('sunny', 'rainy', 'cold', 'snowy', 'windy', 'cloudy', 'mixed'),
-      allowNull: true
-    },
-    temperature: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      validate: {
-        min: -50,
-        max: 50
-      }
-    },
     beneficiariesCount: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -52,29 +41,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
-      validate: {
-        min: 0
-      }
-    },
-    newBeneficiariesCount: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0,
-      validate: {
-        min: 0
-      }
-    },
-    routeDescription: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    routeCoordinates: {
-      type: DataTypes.JSONB,
-      allowNull: true,
-      defaultValue: []
-    },
-    distanceCovered: {
-      type: DataTypes.DECIMAL(5, 2),
-      allowNull: true,
       validate: {
         min: 0
       }
@@ -168,14 +134,15 @@ module.exports = (sequelize, DataTypes) => {
     });
   };
 
-  // Instance methods
+  // Instance method to calculate duration
   MaraudeReport.prototype.calculateDuration = function() {
     const start = new Date(`2000-01-01 ${this.startTime}`);
     const end = new Date(`2000-01-01 ${this.endTime}`);
-    const diff = (end - start) / 1000 / 60; // en minutes
+    const diff = (end - start) / 1000 / 60; // in minutes
     return diff;
   };
 
+  // Instance method to get summary
   MaraudeReport.prototype.getSummary = function() {
     return {
       date: this.reportDate,

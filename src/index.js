@@ -14,6 +14,7 @@ const associationRoutes = require('./routes/associations');
 const maraudeRoutes = require('./routes/maraudes');
 const merchantRoutes = require('./routes/merchants');
 const userRoutes = require('./routes/users');
+const reportRoutes = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,6 +70,8 @@ app.use('/api/associations', associationRoutes);
 app.use('/api/maraudes', maraudeRoutes);
 app.use('/api/merchants', merchantRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/reports', reportRoutes);
+
 
 // 404 handler
 app.use('*', (req, res) => {

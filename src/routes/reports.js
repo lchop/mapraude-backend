@@ -52,6 +52,76 @@ router.get('/distribution-types', async (req, res) => {
   }
 });
 
+// GET /api/reports/check-duplicate - Check if report exists for maraude+date
+router.get('/check-duplicate', authenticateToken, async (req, res) => {
+  try {
+    const { maraudeActionId, reportDate } = req.query;
+
+    console.log('Checking duplicate for:', { maraudeActionId, reportDate });
+
+    if (!maraudeActionId || !reportDate) {
+      return res.status(400).json({ 
+        error: 'maraudeActionId and reportDate are required' 
+      });
+    }
+
+    // Check if report exists
+    const existingReport = await MaraudeReport.findOne({
+      where: { 
+        maraudeActionId, 
+        reportDate 
+      },
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['firstName', 'lastName']
+        },
+        {
+          model: MaraudeAction,
+          as: 'maraudeAction',
+          attributes: ['title']
+        }
+      ]
+    });
+
+    if (existingReport) {
+      const creatorName = `${existingReport.creator.firstName} ${existingReport.creator.lastName}`;
+      const createdDate = new Date(existingReport.createdAt).toLocaleDateString('fr-FR');
+      
+      console.log('Duplicate found:', existingReport.id);
+      
+      return res.json({
+        exists: true,
+        report: {
+          id: existingReport.id,
+          createdBy: creatorName,
+          createdDate: createdDate,
+          maraudeTitle: existingReport.maraudeAction.title,
+          status: existingReport.status
+        },
+        message: `Un compte-rendu existe déjà pour cette maraude le ${reportDate}`,
+        details: `Créé par ${creatorName} le ${createdDate}`
+      });
+    }
+
+    console.log('No duplicate found');
+    
+    res.json({
+      exists: false,
+      message: 'Aucun rapport existant trouvé'
+    });
+
+  } catch (error) {
+    console.error('Check duplicate error:', error);
+    res.status(500).json({ 
+      error: 'Failed to check for duplicate report',
+      details: error.message 
+    });
+  }
+});
+
+
 // GET /api/reports - Get all reports (with filters)
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -232,7 +302,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/reports - Create new report
+// POST /api/reports -
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
@@ -240,69 +310,84 @@ router.post('/', authenticateToken, async (req, res) => {
       reportDate,
       startTime,
       endTime,
-      weatherConditions,
-      temperature,
       beneficiariesCount,
       volunteersCount,
-      newBeneficiariesCount,
-      routeDescription,
-      routeCoordinates,
-      distanceCovered,
       generalNotes,
       difficultiesEncountered,
       positivePoints,
-      distributions, // Array of { distributionTypeId, quantity, notes }
-      alerts, // Array of alert objects
+      distributions,
+      alerts,
       urgentSituationsDetails
     } = req.body;
 
-    // Verify the maraude action exists and user has permission
+    console.log('Creating report for:', { maraudeActionId, reportDate });
+
+    // Verify maraude action exists
     const maraudeAction = await MaraudeAction.findByPk(maraudeActionId);
     if (!maraudeAction) {
-      return res.status(404).json({ error: 'Maraude action not found' });
-    }
-
-    if (req.user.role !== 'admin' && 
-        maraudeAction.associationId !== req.user.associationId) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    // Check if report already exists for this date and maraude
-    const existingReport = await MaraudeReport.findOne({
-      where: {
-        maraudeActionId,
-        reportDate
-      }
-    });
-
-    if (existingReport) {
-      return res.status(409).json({ 
-        error: 'Un compte-rendu existe déjà pour cette maraude à cette date' 
+      return res.status(404).json({ 
+        error: 'Action de maraude introuvable',
+        message: 'L\'action de maraude sélectionnée n\'existe pas.' 
       });
     }
 
-    // Create the report
+    // Check permissions
+    if (req.user.role !== 'admin' && 
+        maraudeAction.associationId !== req.user.associationId) {
+      return res.status(403).json({ 
+        error: 'Accès refusé',
+        message: 'Vous ne pouvez créer des rapports que pour votre association.' 
+      });
+    }
+
+    // Enhanced duplicate check
+    const existingReport = await MaraudeReport.findOne({
+      where: { 
+        maraudeActionId, 
+        reportDate 
+      },
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['firstName', 'lastName']
+        }
+      ]
+    });
+
+    if (existingReport) {
+      const creatorName = `${existingReport.creator.firstName} ${existingReport.creator.lastName}`;
+      const createdDate = new Date(existingReport.createdAt).toLocaleDateString('fr-FR');
+      
+      console.log('Duplicate report found:', existingReport.id);
+      return res.status(409).json({ 
+        error: 'Rapport déjà existant',
+        message: `Un compte-rendu existe déjà pour cette maraude le ${reportDate}.`,
+        details: `Créé par ${creatorName} le ${createdDate}`,
+        existingReportId: existingReport.id
+      });
+    }
+
+    console.log('No existing report found, proceeding...');
+
+    // Create report with AUTO-SUBMIT status
     const report = await MaraudeReport.create({
       maraudeActionId,
       reportDate,
       startTime,
       endTime,
-      weatherConditions,
-      temperature,
-      beneficiariesCount,
-      volunteersCount,
-      newBeneficiariesCount,
-      routeDescription,
-      routeCoordinates,
-      distanceCovered,
-      generalNotes,
-      difficultiesEncountered,
-      positivePoints,
+      beneficiariesCount: parseInt(beneficiariesCount),
+      volunteersCount: parseInt(volunteersCount),
+      generalNotes: generalNotes || null,
+      difficultiesEncountered: difficultiesEncountered || null,
+      positivePoints: positivePoints || null,
       hasUrgentSituations: (alerts && alerts.length > 0) || !!urgentSituationsDetails,
-      urgentSituationsDetails,
+      urgentSituationsDetails: urgentSituationsDetails || null,
       createdBy: req.user.id,
-      status: 'draft'
+      status: 'submitted' // AUTO-SUBMIT instead of 'draft'
     });
+
+    console.log('Report created with auto-submit status:', report.id);
 
     // Create distributions
     if (distributions && distributions.length > 0) {
@@ -310,11 +395,12 @@ router.post('/', authenticateToken, async (req, res) => {
         ReportDistribution.create({
           reportId: report.id,
           distributionTypeId: dist.distributionTypeId,
-          quantity: dist.quantity,
-          notes: dist.notes
+          quantity: parseInt(dist.quantity),
+          notes: dist.notes || null
         })
       );
       await Promise.all(distributionPromises);
+      console.log('Distributions created:', distributions.length);
     }
 
     // Create alerts
@@ -324,20 +410,21 @@ router.post('/', authenticateToken, async (req, res) => {
           reportId: report.id,
           alertType: alert.alertType,
           severity: alert.severity,
-          locationLatitude: alert.locationLatitude,
-          locationLongitude: alert.locationLongitude,
-          locationAddress: alert.locationAddress,
-          personDescription: alert.personDescription,
+          locationLatitude: alert.locationLatitude || null,
+          locationLongitude: alert.locationLongitude || null,
+          locationAddress: alert.locationAddress || null,
+          personDescription: alert.personDescription || null,
           situationDescription: alert.situationDescription,
-          actionTaken: alert.actionTaken,
-          followUpRequired: alert.followUpRequired,
-          followUpNotes: alert.followUpNotes
+          actionTaken: alert.actionTaken || null,
+          followUpRequired: alert.followUpRequired || false,
+          followUpNotes: alert.followUpNotes || null
         })
       );
       await Promise.all(alertPromises);
+      console.log('Alerts created:', alerts.length);
     }
 
-    // Fetch the complete report with associations
+    // Return complete report
     const completeReport = await MaraudeReport.findByPk(report.id, {
       include: [
         {
@@ -356,15 +443,19 @@ router.post('/', authenticateToken, async (req, res) => {
     });
 
     res.status(201).json({
-      message: 'Report created successfully',
-      report: completeReport
+      message: 'Rapport créé et soumis automatiquement',
+      report: completeReport,
+      autoSubmitted: true
     });
 
   } catch (error) {
     console.error('Create report error:', error);
     res.status(400).json({ 
-      error: 'Failed to create report',
-      details: error.message 
+      error: 'Erreur lors de la création du rapport',
+      message: error.message,
+      details: error.name === 'SequelizeValidationError' ? 
+        error.errors.map(e => `${e.path}: ${e.message}`) : 
+        [error.message]
     });
   }
 });
@@ -385,23 +476,26 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Report not found' });
     }
 
-    // Check permissions
+    // UPDATED PERMISSIONS: Allow editing of submitted reports
     const canEdit = (
-      report.createdBy === req.user.id ||
+      report.createdBy === req.user.id || // Creator can edit their own reports
       (req.user.associationId === report.maraudeAction.associationId && 
-       ['coordinator', 'admin'].includes(req.user.role))
+       ['coordinator', 'admin'].includes(req.user.role)) || // Coordinator/admin of same association
+      req.user.role === 'admin' // Admin can edit any report
     );
 
     if (!canEdit) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Don't allow editing validated reports unless admin
+    // UPDATED: Only prevent editing of validated reports (not submitted)
     if (report.status === 'validated' && req.user.role !== 'admin') {
       return res.status(403).json({ 
-        error: 'Cannot edit validated report' 
+        error: 'Cannot edit validated report. Only administrators can modify validated reports.' 
       });
     }
+
+    console.log(`Updating report ${report.id} by user ${req.user.id}`);
 
     const {
       distributions,
@@ -413,7 +507,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     await report.update(reportData);
 
     // Update distributions if provided
-    if (distributions) {
+    if (distributions !== undefined) {
       // Delete existing distributions
       await ReportDistribution.destroy({ where: { reportId: report.id } });
       
@@ -432,7 +526,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     // Update alerts if provided
-    if (alerts) {
+    if (alerts !== undefined) {
       // Delete existing alerts
       await ReportAlert.destroy({ where: { reportId: report.id } });
       
@@ -480,6 +574,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
   }
 });
+
 
 // PATCH /api/reports/:id/submit - Submit report for validation
 router.patch('/:id/submit', authenticateToken, async (req, res) => {
@@ -764,13 +859,40 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Report not found' });
     }
 
-    // Check permissions - only creator or admin can delete
-    if (report.createdBy !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied' });
+    // Check permissions
+    const canDelete = (
+      (report.createdBy === req.user.id && report.status !== 'validated') ||
+      (req.user.role === 'coordinator' && 
+       req.user.associationId === report.maraudeAction.associationId && 
+       report.status !== 'validated') ||
+      req.user.role === 'admin'
+    );
+
+    if (!canDelete) {
+      return res.status(403).json({ 
+        error: 'Access denied. You can only delete your own reports or reports from your association that are not yet validated.' 
+      });
     }
 
-    // Actually delete the report and its associations (cascade delete)
+    console.log(`Deleting report ${report.id} by user ${req.user.id}`);
+
+    // DELETE RELATED RECORDS FIRST (cascade delete manually)
+    
+    // 1. Delete report alerts first
+    await ReportAlert.destroy({
+      where: { reportId: report.id }
+    });
+    console.log('Deleted alerts for report:', report.id);
+
+    // 2. Delete report distributions
+    await ReportDistribution.destroy({
+      where: { reportId: report.id }
+    });
+    console.log('Deleted distributions for report:', report.id);
+
+    // 3. Now delete the main report
     await report.destroy();
+    console.log('Deleted report:', report.id);
 
     res.json({
       message: 'Report deleted successfully'
