@@ -1,3 +1,5 @@
+// Update your backend src/models/maraudeAction.js
+
 module.exports = (sequelize, DataTypes) => {
   const MaraudeAction = sequelize.define('MaraudeAction', {
     id: {
@@ -17,7 +19,8 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    latitude: {
+    // UPDATED: Starting point coordinates
+    startLatitude: {
       type: DataTypes.DECIMAL(10, 8),
       allowNull: false,
       validate: {
@@ -25,9 +28,58 @@ module.exports = (sequelize, DataTypes) => {
         max: 90
       }
     },
-    longitude: {
+    startLongitude: {
       type: DataTypes.DECIMAL(11, 8),
       allowNull: false,
+      validate: {
+        min: -180,
+        max: 180
+      }
+    },
+    startAddress: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    // NEW: Waypoints as JSON array
+    waypoints: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: []
+      // Structure: [{ latitude: number, longitude: number, address?: string, name?: string, order: number }]
+    },
+    // NEW: Route polyline (encoded path for displaying route on map)
+    routePolyline: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    // NEW: Estimated total distance in kilometers
+    estimatedDistance: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+      validate: {
+        min: 0
+      }
+    },
+    // NEW: Estimated duration in minutes
+    estimatedDuration: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      validate: {
+        min: 0
+      }
+    },
+    // DEPRECATED: Keep for backward compatibility but we'll use startLatitude/startLongitude now
+    latitude: {
+      type: DataTypes.DECIMAL(10, 8),
+      allowNull: true,
+      validate: {
+        min: -90,
+        max: 90
+      }
+    },
+    longitude: {
+      type: DataTypes.DECIMAL(11, 8),
+      allowNull: true,
       validate: {
         min: -180,
         max: 180
@@ -37,7 +89,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true
     },
-    // NEW: Day of week (1=Monday, 2=Tuesday, ..., 7=Sunday)
+    // Existing fields...
     dayOfWeek: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -46,12 +98,10 @@ module.exports = (sequelize, DataTypes) => {
         max: 7
       }
     },
-    // NEW: Whether this is a recurring weekly maraude
     isRecurring: {
       type: DataTypes.BOOLEAN,
       defaultValue: true
     },
-    // MODIFIED: Now optional - only for one-time events
     scheduledDate: {
       type: DataTypes.DATEONLY,
       allowNull: true
@@ -91,7 +141,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    // NEW: Enable/disable recurring maraudes
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true
@@ -126,18 +175,20 @@ module.exports = (sequelize, DataTypes) => {
         fields: ['status']
       },
       {
-        fields: ['latitude', 'longitude']
+        fields: ['startLatitude', 'startLongitude']
+      },
+      {
+        fields: ['latitude', 'longitude'] // Keep for backward compatibility
       }
     ]
   });
 
-  // Instance method to get French day name
+  // Instance methods (existing ones remain the same)
   MaraudeAction.prototype.getDayName = function() {
     const days = ['', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
     return this.dayOfWeek ? days[this.dayOfWeek] : 'Ponctuel';
   };
 
-  // Instance method to check if happening today
   MaraudeAction.prototype.isHappeningToday = function() {
     if (!this.isRecurring || !this.isActive) {
       if (this.scheduledDate) {
@@ -148,12 +199,10 @@ module.exports = (sequelize, DataTypes) => {
     }
     
     const today = new Date();
-    // Convert JavaScript day (0=Sunday) to ISO day (1=Monday)
     const todayISO = today.getDay() === 0 ? 7 : today.getDay();
     return todayISO === this.dayOfWeek;
   };
 
-  // Instance method to get next occurrence date
   MaraudeAction.prototype.getNextOccurrence = function() {
     if (!this.isRecurring || !this.isActive) {
       return this.scheduledDate;
@@ -168,7 +217,6 @@ module.exports = (sequelize, DataTypes) => {
       daysUntilNext += 7;
     }
     
-    // If it's today but time has passed, get next week
     if (daysUntilNext === 0) {
       const [hours, minutes] = this.startTime.split(':').map(Number);
       const startTimeToday = new Date();
@@ -182,6 +230,17 @@ module.exports = (sequelize, DataTypes) => {
     const nextDate = new Date(today);
     nextDate.setDate(today.getDate() + daysUntilNext);
     return nextDate.toISOString().split('T')[0];
+  };
+
+  // NEW: Instance method to get route summary
+  MaraudeAction.prototype.getRouteSummary = function() {
+    const waypointCount = this.waypoints ? this.waypoints.length : 0;
+    return {
+      totalPoints: waypointCount + 1, // +1 for start point
+      estimatedDistance: this.estimatedDistance,
+      estimatedDuration: this.estimatedDuration,
+      hasRoute: waypointCount > 0
+    };
   };
 
   MaraudeAction.associate = (models) => {
