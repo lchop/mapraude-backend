@@ -1,4 +1,4 @@
-// src/routes/maraudes.js - Complete file
+// src/routes/maraudes.js - Fixed route order
 const express = require('express');
 const { Op } = require('sequelize');
 const { MaraudeAction, Association, User } = require('../models');
@@ -6,138 +6,13 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/maraudes - Get all maraude actions (updated for weekly)
-router.get('/', async (req, res) => {
-  try {
-    const {
-      page = 1,
-      limit = 50,
-      status,
-      associationId,
-      dayOfWeek,
-      isRecurring,
-      isActive = 'true'
-    } = req.query;
+// IMPORTANT: Specific routes MUST come before general patterns like /:id
 
-    const offset = (page - 1) * limit;
-    const whereClause = {};
-
-    // Filter by status
-    if (status) {
-      whereClause.status = status;
-    }
-
-    // Filter by association
-    if (associationId) {
-      whereClause.associationId = associationId;
-    }
-
-    // Filter by day of week
-    if (dayOfWeek) {
-      whereClause.dayOfWeek = parseInt(dayOfWeek);
-    }
-
-    // Filter by recurring
-    if (isRecurring !== undefined) {
-      whereClause.isRecurring = isRecurring === 'true';
-    }
-
-    // Filter by active status
-    if (isActive !== 'all') {
-      whereClause.isActive = isActive === 'true';
-    }
-
-    const { count, rows: actions } = await MaraudeAction.findAndCountAll({
-      where: whereClause,
-      include: [
-        {
-          model: Association,
-          as: 'association',
-          attributes: ['id', 'name']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName']
-        }
-      ],
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      order: [['dayOfWeek', 'ASC'], ['startTime', 'ASC']]
-    });
-
-    // Add computed fields for each action
-    const actionsWithMetadata = actions.map(action => {
-      const actionData = action.toJSON();
-      actionData.nextOccurrence = action.getNextOccurrence();
-      actionData.isHappeningToday = action.isHappeningToday();
-      actionData.dayName = action.getDayName();
-      return actionData;
-    });
-
-    res.json({
-      actions: actionsWithMetadata,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: count,
-        pages: Math.ceil(count / limit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Get maraudes error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch maraude actions',
-      details: error.message 
-    });
-  }
-});
-
-// GET /api/maraudes/:id - Get specific maraude action
-router.get('/:id', async (req, res) => {
-  try {
-    const action = await MaraudeAction.findByPk(req.params.id, {
-      include: [
-        {
-          model: Association,
-          as: 'association',
-          attributes: ['id', 'name', 'email', 'phone']
-        },
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ]
-    });
-
-    if (!action) {
-      return res.status(404).json({ error: 'Maraude action not found' });
-    }
-
-    // Add computed fields
-    const actionData = action.toJSON();
-    actionData.nextOccurrence = action.getNextOccurrence();
-    actionData.isHappeningToday = action.isHappeningToday();
-    actionData.dayName = action.getDayName();
-
-    res.json({ action: actionData });
-
-  } catch (error) {
-    console.error('Get maraude error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch maraude action',
-      details: error.message 
-    });
-  }
-});
-
-// GET /api/maraudes/today/active - Get today's active maraudes (UPDATED)
+// GET /api/maraudes/today/active - MOVED UP
 router.get('/today/active', async (req, res) => {
   try {
     const today = new Date();
-    const todayISO = today.getDay() === 0 ? 7 : today.getDay(); // Convert to ISO day
+    const todayISO = today.getDay() === 0 ? 7 : today.getDay();
 
     const actions = await MaraudeAction.findAll({
       where: {
@@ -145,12 +20,10 @@ router.get('/today/active', async (req, res) => {
           { isActive: true },
           {
             [Op.or]: [
-              // Recurring maraudes happening today
               {
                 isRecurring: true,
                 dayOfWeek: todayISO
               },
-              // One-time events scheduled for today
               {
                 isRecurring: false,
                 scheduledDate: today.toISOString().split('T')[0]
@@ -174,7 +47,6 @@ router.get('/today/active', async (req, res) => {
       order: [['startTime', 'ASC']]
     });
 
-    // Add computed fields for each action
     const actionsWithMetadata = actions.map(action => {
       const actionData = action.toJSON();
       actionData.nextOccurrence = action.getNextOccurrence();
@@ -200,7 +72,7 @@ router.get('/today/active', async (req, res) => {
   }
 });
 
-// NEW: GET /api/maraudes/weekly-schedule - Get this week's full schedule
+// GET /api/maraudes/weekly-schedule - MOVED UP
 router.get('/weekly-schedule', async (req, res) => {
   try {
     const recurringActions = await MaraudeAction.findAll({
@@ -223,15 +95,8 @@ router.get('/weekly-schedule', async (req, res) => {
       order: [['dayOfWeek', 'ASC'], ['startTime', 'ASC']]
     });
 
-    // Organize by day of week
     const weeklySchedule = {
-      1: [], // Lundi
-      2: [], // Mardi
-      3: [], // Mercredi
-      4: [], // Jeudi
-      5: [], // Vendredi
-      6: [], // Samedi
-      7: []  // Dimanche
+      1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: []
     };
 
     recurringActions.forEach(action => {
@@ -264,8 +129,131 @@ router.get('/weekly-schedule', async (req, res) => {
   }
 });
 
-// POST /api/maraudes - Create new maraude action (UPDATED for weekly)
+// GET /api/maraudes/:id - Get specific maraude (MOVED AFTER specific routes)
+router.get('/:id', async (req, res) => {
+  try {
+    const action = await MaraudeAction.findByPk(req.params.id, {
+      include: [
+        {
+          model: Association,
+          as: 'association',
+          attributes: ['id', 'name', 'email', 'phone']
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        }
+      ]
+    });
+
+    if (!action) {
+      return res.status(404).json({ error: 'Maraude action not found' });
+    }
+
+    const actionData = action.toJSON();
+    actionData.nextOccurrence = action.getNextOccurrence();
+    actionData.isHappeningToday = action.isHappeningToday();
+    actionData.dayName = action.getDayName();
+
+    res.json({ action: actionData });
+
+  } catch (error) {
+    console.error('Get maraude error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch maraude action',
+      details: error.message 
+    });
+  }
+});
+
+// GET /api/maraudes - Get all maraude actions (MOVED AFTER /:id)
+router.get('/', async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      status,
+      associationId,
+      dayOfWeek,
+      isRecurring,
+      isActive = 'true'
+    } = req.query;
+
+    const offset = (page - 1) * limit;
+    const whereClause = {};
+
+    if (status) {
+      whereClause.status = status;
+    }
+    if (associationId) {
+      whereClause.associationId = associationId;
+    }
+    if (dayOfWeek) {
+      whereClause.dayOfWeek = parseInt(dayOfWeek);
+    }
+    if (isRecurring !== undefined) {
+      whereClause.isRecurring = isRecurring === 'true';
+    }
+    if (isActive !== 'all') {
+      whereClause.isActive = isActive === 'true';
+    }
+
+    const { count, rows: actions } = await MaraudeAction.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: Association,
+          as: 'association',
+          attributes: ['id', 'name']
+        },
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'firstName', 'lastName']
+        }
+      ],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['dayOfWeek', 'ASC'], ['startTime', 'ASC']]
+    });
+
+    const actionsWithMetadata = actions.map(action => {
+      const actionData = action.toJSON();
+      actionData.nextOccurrence = action.getNextOccurrence();
+      actionData.isHappeningToday = action.isHappeningToday();
+      actionData.dayName = action.getDayName();
+      return actionData;
+    });
+
+    res.json({
+      actions: actionsWithMetadata,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: count,
+        pages: Math.ceil(count / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get maraudes error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch maraude actions',
+      details: error.message 
+    });
+  }
+});
+
+// POST /api/maraudes - Create new maraude action
+// In your backend src/routes/maraudes.js
+// Replace the POST route with this version that handles empty strings:
+
 router.post('/', authenticateToken, async (req, res) => {
+  console.log('POST /api/maraudes called');
+  console.log('User from token:', req.user);
+  console.log('Request body:', req.body);
+  
   try {
     const {
       title,
@@ -295,26 +283,30 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    const action = await MaraudeAction.create({
+    // IMPORTANT: Handle empty strings - convert to null for database
+    const cleanData = {
       title,
-      description,
+      description: description && description.trim() !== '' ? description : null,
       latitude,
       longitude,
-      address,
+      address: address && address.trim() !== '' ? address : null,
       dayOfWeek: isRecurring ? dayOfWeek : null,
       isRecurring,
       scheduledDate: !isRecurring ? scheduledDate : null,
       startTime,
-      endTime,
+      endTime: endTime && endTime.trim() !== '' ? endTime : null, // FIX: Convert empty string to null
       participantsCount,
-      notes,
+      notes: notes && notes.trim() !== '' ? notes : null,
       createdBy: req.user.id,
       associationId: req.user.associationId,
       status: 'planned',
       isActive: true
-    });
+    };
 
-    // Fetch the created action with associations
+    console.log('Cleaned data for database:', cleanData);
+
+    const action = await MaraudeAction.create(cleanData);
+
     const createdAction = await MaraudeAction.findByPk(action.id, {
       include: [
         {
@@ -330,7 +322,6 @@ router.post('/', authenticateToken, async (req, res) => {
       ]
     });
 
-    // Add computed fields
     const actionData = createdAction.toJSON();
     actionData.nextOccurrence = createdAction.getNextOccurrence();
     actionData.dayName = createdAction.getDayName();
@@ -359,7 +350,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Maraude action not found' });
     }
 
-    // Check permissions: creator, coordinator/admin of same association
     const canEdit = (
       action.createdBy === req.user.id ||
       (req.user.associationId === action.associationId && 
@@ -371,25 +361,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const {
-      title,
-      description,
-      latitude,
-      longitude,
-      address,
-      dayOfWeek,
-      isRecurring,
-      scheduledDate,
-      startTime,
-      endTime,
-      status,
-      participantsCount,
-      beneficiariesHelped,
-      materialsDistributed,
-      notes,
-      isActive
+      title, description, latitude, longitude, address, dayOfWeek,
+      isRecurring, scheduledDate, startTime, endTime, status,
+      participantsCount, beneficiariesHelped, materialsDistributed,
+      notes, isActive
     } = req.body;
 
-    // Validation for weekly updates
     if (isRecurring !== undefined && isRecurring && (dayOfWeek === null || dayOfWeek === undefined)) {
       return res.status(400).json({ 
         error: 'dayOfWeek is required for recurring maraudes' 
@@ -403,21 +380,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const updateData = {
-      title,
-      description,
-      latitude,
-      longitude,
-      address,
-      startTime,
-      endTime,
-      status,
-      participantsCount,
-      beneficiariesHelped,
-      materialsDistributed,
-      notes
+      title, description, latitude, longitude, address,
+      startTime, endTime, status, participantsCount,
+      beneficiariesHelped, materialsDistributed, notes
     };
 
-    // Handle weekly schedule updates
     if (isRecurring !== undefined) {
       updateData.isRecurring = isRecurring;
       updateData.dayOfWeek = isRecurring ? dayOfWeek : null;
@@ -430,7 +397,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     await action.update(updateData);
 
-    // Fetch updated action with associations
     const updatedAction = await MaraudeAction.findByPk(action.id, {
       include: [
         {
@@ -446,7 +412,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
       ]
     });
 
-    // Add computed fields
     const actionData = updatedAction.toJSON();
     actionData.nextOccurrence = updatedAction.getNextOccurrence();
     actionData.dayName = updatedAction.getDayName();
@@ -475,7 +440,6 @@ router.delete('/:id', authenticateToken, requireRole('coordinator', 'admin'), as
       return res.status(404).json({ error: 'Maraude action not found' });
     }
 
-    // Check if user belongs to same association (unless admin)
     if (req.user.role !== 'admin' && req.user.associationId !== action.associationId) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -495,7 +459,7 @@ router.delete('/:id', authenticateToken, requireRole('coordinator', 'admin'), as
   }
 });
 
-// PATCH /api/maraudes/:id/toggle - Toggle active status (NEW)
+// PATCH /api/maraudes/:id/toggle - Toggle active status
 router.patch('/:id/toggle', authenticateToken, requireRole('coordinator', 'admin'), async (req, res) => {
   try {
     const action = await MaraudeAction.findByPk(req.params.id);
@@ -504,14 +468,12 @@ router.patch('/:id/toggle', authenticateToken, requireRole('coordinator', 'admin
       return res.status(404).json({ error: 'Maraude action not found' });
     }
 
-    // Check if user belongs to same association (unless admin)
     if (req.user.role !== 'admin' && req.user.associationId !== action.associationId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
     await action.update({ isActive: !action.isActive });
 
-    // Fetch updated action with computed fields
     const actionData = action.toJSON();
     actionData.nextOccurrence = action.getNextOccurrence();
     actionData.dayName = action.getDayName();
