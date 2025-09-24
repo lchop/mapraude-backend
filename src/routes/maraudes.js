@@ -245,10 +245,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/maraudes - Create new maraude action
-// In your backend src/routes/maraudes.js
-// Replace the POST route with this version that handles empty strings:
-
 router.post('/', authenticateToken, async (req, res) => {
   console.log('POST /api/maraudes called');
   console.log('User from token:', req.user);
@@ -258,9 +254,13 @@ router.post('/', authenticateToken, async (req, res) => {
     const {
       title,
       description,
-      latitude,
-      longitude,
-      address,
+      startLatitude,
+      startLongitude,
+      startAddress,
+      waypoints,
+      estimatedDistance,
+      estimatedDuration,
+      routePolyline,
       dayOfWeek,
       isRecurring = true,
       scheduledDate,
@@ -283,19 +283,29 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    // IMPORTANT: Handle empty strings - convert to null for database
+    if (!startLatitude || !startLongitude) {
+      return res.status(400).json({
+        error: 'Starting coordinates (startLatitude/startLongitude) are required'
+      });
+    }
+
+    // Clean data for database - NEW FIELDS ONLY
     const cleanData = {
       title,
       description: description && description.trim() !== '' ? description : null,
-      latitude,
-      longitude,
-      address: address && address.trim() !== '' ? address : null,
+      startLatitude,
+      startLongitude,
+      startAddress: startAddress && startAddress.trim() !== '' ? startAddress : null,
+      waypoints: waypoints || [],
+      estimatedDistance: estimatedDistance || null,
+      estimatedDuration: estimatedDuration || null,
+      routePolyline: routePolyline || null,
       dayOfWeek: isRecurring ? dayOfWeek : null,
       isRecurring,
       scheduledDate: !isRecurring ? scheduledDate : null,
       startTime,
-      endTime: endTime && endTime.trim() !== '' ? endTime : null, // FIX: Convert empty string to null
-      participantsCount,
+      endTime: endTime && endTime.trim() !== '' ? endTime : null,
+      participantsCount: participantsCount || 0,
       notes: notes && notes.trim() !== '' ? notes : null,
       createdBy: req.user.id,
       associationId: req.user.associationId,
@@ -322,6 +332,7 @@ router.post('/', authenticateToken, async (req, res) => {
       ]
     });
 
+    // Add computed fields
     const actionData = createdAction.toJSON();
     actionData.nextOccurrence = createdAction.getNextOccurrence();
     actionData.dayName = createdAction.getDayName();
@@ -341,9 +352,12 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// PUT /api/maraudes/:id - Update maraude action
+// PUT /api/maraudes/:id - Update maraude action (FIXED for waypoints)
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
+    console.log('🔄 PUT /api/maraudes/:id - Update request received');
+    console.log('📦 Request body:', req.body);
+
     const action = await MaraudeAction.findByPk(req.params.id);
 
     if (!action) {
@@ -361,11 +375,21 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const {
-      title, description, latitude, longitude, address, dayOfWeek,
-      isRecurring, scheduledDate, startTime, endTime, status,
-      participantsCount, beneficiariesHelped, materialsDistributed,
+      title, description, 
+      // OLD fields for backward compatibility
+      latitude, longitude, address, 
+      // NEW route planning fields
+      startLatitude, startLongitude, startAddress, waypoints,
+      estimatedDistance, estimatedDuration, routePolyline,
+      // Scheduling fields
+      dayOfWeek, isRecurring, scheduledDate, startTime, endTime, 
+      // Status and tracking
+      status, participantsCount, beneficiariesHelped, materialsDistributed,
       notes, isActive
     } = req.body;
+
+    console.log('🎯 PUT Update - Received waypoints:', waypoints);
+    console.log('📊 PUT Update - Waypoints count:', waypoints?.length || 0);
 
     if (isRecurring !== undefined && isRecurring && (dayOfWeek === null || dayOfWeek === undefined)) {
       return res.status(400).json({ 
@@ -379,12 +403,38 @@ router.put('/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    const updateData = {
-      title, description, latitude, longitude, address,
-      startTime, endTime, status, participantsCount,
-      beneficiariesHelped, materialsDistributed, notes
-    };
+    // Build update data object carefully
+    const updateData = {};
 
+    // Basic fields
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (notes !== undefined) updateData.notes = notes;
+    if (startTime !== undefined) updateData.startTime = startTime;
+    if (endTime !== undefined) updateData.endTime = endTime;
+    if (status !== undefined) updateData.status = status;
+    if (participantsCount !== undefined) updateData.participantsCount = participantsCount;
+    if (beneficiariesHelped !== undefined) updateData.beneficiariesHelped = beneficiariesHelped;
+    if (materialsDistributed !== undefined) updateData.materialsDistributed = materialsDistributed;
+
+    // NEW route planning fields - CRITICAL: These need to be updated
+    if (startLatitude !== undefined) updateData.startLatitude = startLatitude;
+    if (startLongitude !== undefined) updateData.startLongitude = startLongitude;
+    if (startAddress !== undefined) updateData.startAddress = startAddress;
+    if (waypoints !== undefined) {
+      updateData.waypoints = waypoints;
+      console.log('✅ PUT Update - Setting waypoints to:', waypoints);
+    }
+    if (estimatedDistance !== undefined) updateData.estimatedDistance = estimatedDistance;
+    if (estimatedDuration !== undefined) updateData.estimatedDuration = estimatedDuration;
+    if (routePolyline !== undefined) updateData.routePolyline = routePolyline;
+
+    // Backward compatibility fields
+    if (latitude !== undefined) updateData.latitude = latitude;
+    if (longitude !== undefined) updateData.longitude = longitude;
+    if (address !== undefined) updateData.address = address;
+
+    // Scheduling updates
     if (isRecurring !== undefined) {
       updateData.isRecurring = isRecurring;
       updateData.dayOfWeek = isRecurring ? dayOfWeek : null;
@@ -395,8 +445,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       updateData.isActive = isActive;
     }
 
+    console.log('🔧 PUT Update - Final updateData being applied:', updateData);
+
+    // Apply the update
     await action.update(updateData);
 
+    // Fetch the updated action with associations
     const updatedAction = await MaraudeAction.findByPk(action.id, {
       include: [
         {
@@ -412,10 +466,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       ]
     });
 
+    // Add computed fields
     const actionData = updatedAction.toJSON();
     actionData.nextOccurrence = updatedAction.getNextOccurrence();
     actionData.dayName = updatedAction.getDayName();
     actionData.isHappeningToday = updatedAction.isHappeningToday();
+
+    console.log('✅ PUT Update - Response waypoints:', actionData.waypoints);
+    console.log('📊 PUT Update - Response waypoints count:', actionData.waypoints?.length || 0);
 
     res.json({
       message: 'Maraude action updated successfully',
@@ -423,7 +481,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update maraude error:', error);
+    console.error('❌ Update maraude error:', error);
     res.status(400).json({ 
       error: 'Failed to update maraude action',
       details: error.message 
