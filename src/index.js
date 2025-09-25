@@ -53,8 +53,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static files from public directory (Angular app)
 app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: '1d', // Cache static files for 1 day
-  etag: true
+  maxAge: '1d',
+  etag: false
 }));
 
 // Health check endpoint
