@@ -51,8 +51,9 @@ app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files from public directory (Angular app)
-app.use(express.static(path.join(__dirname, 'public'), {
+// 🔧 FIXED: Serve static files from public directory (Angular app)
+// Go up one level from src/ to find public/
+app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: '1d',
   etag: false
 }));
@@ -112,20 +113,30 @@ app.use('/api/*', (req, res) => {
   });
 });
 
-// Handle Angular routing - serve index.html for all non-API routes
+// 🔧 FIXED: Handle Angular routing - serve index.html for all non-API routes
 app.get('*', (req, res) => {
   // Don't serve Angular app for API routes
   if (req.originalUrl.startsWith('/api/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
+
+  // ✅ FIXED: Go up one level from src/ to find public/index.html
+  const indexPath = path.join(__dirname, '..', 'public', 'index.html');
   
-  const indexPath = path.join(__dirname, 'public', 'index.html');
+  console.log('🔍 Serving frontend for:', req.originalUrl);
+  console.log('📁 Looking for index.html at:', indexPath);
+  
   res.sendFile(indexPath, (err) => {
     if (err) {
-      console.error('Error serving index.html:', err);
+      console.error('❌ Error serving index.html:', err);
       res.status(500).json({ 
         error: 'Frontend not found',
         message: 'Please build and copy your Angular app to the public folder',
+        debug: {
+          indexPath: indexPath,
+          currentDir: __dirname,
+          error: err.message
+        },
         instructions: [
           '1. Build your Angular app: ng build --configuration=production',
           '2. Copy dist/browser/* to public/ folder',
@@ -183,6 +194,31 @@ app.use((err, req, res, next) => {
   });
 });
 
+// 🔍 Debug function to check file system (temporary)
+async function checkFileSystem() {
+  const fs = require('fs');
+  const publicDir = path.join(__dirname, '..', 'public');
+  const indexPath = path.join(publicDir, 'index.html');
+  
+  console.log('🔍 File system check:');
+  console.log('📂 Current __dirname:', __dirname);
+  console.log('📁 Public directory path:', publicDir);
+  console.log('📄 Index file path:', indexPath);
+  console.log('📁 Public dir exists:', fs.existsSync(publicDir));
+  console.log('📄 Index.html exists:', fs.existsSync(indexPath));
+  
+  if (fs.existsSync(publicDir)) {
+    try {
+      const files = fs.readdirSync(publicDir);
+      console.log('📋 Files in public/:', files.slice(0, 10)); // Show first 10 files
+    } catch (error) {
+      console.log('❌ Error reading public directory:', error.message);
+    }
+  }
+  
+  console.log('==========================================');
+}
+
 // Start server
 async function startServer() {
   try {
@@ -193,6 +229,9 @@ async function startServer() {
     await sequelize.authenticate();
     console.log('✅ Database connection verified');
     console.log('📊 Using manually created schema with weekly maraudes');
+
+    // 🔍 Debug: Check file system
+    await checkFileSystem();
 
     app.listen(PORT, () => {
       console.log(`🚀 Maraude Tracker Full Stack Server Started`);
@@ -207,7 +246,7 @@ async function startServer() {
       console.log(`   - http://localhost:${PORT}/api/maraudes/weekly-schedule`);
       console.log(`   - http://localhost:${PORT}/api/merchants`);
       console.log('==================================================');
-      console.log(`💡 To add frontend: Copy your Angular build to ./public/`);
+      console.log(`💡 Frontend files should be in: ${path.join(__dirname, '..', 'public')}`);
     });
 
   } catch (error) {
