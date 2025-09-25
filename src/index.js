@@ -3,7 +3,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
-const fs = require('fs');
 require('dotenv').config();
 
 const { testConnection, sequelize } = require('./config/connection');
@@ -20,89 +19,43 @@ const reportRoutes = require('./routes/reports');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🧪 TEMPORARY: Disable CSP completely for testing
-app.use((req, res, next) => {
-  res.removeHeader('Content-Security-Policy');
-  res.removeHeader('X-Content-Security-Policy');
-  res.removeHeader('X-WebKit-CSP');
-  next();
-});
+// Security middleware - Updated for integrated frontend
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-eval'"], // Angular needs unsafe-eval
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "https:", "data:"]
+    }
+  }
+}));
 
-// CORS configuration
+// CORS configuration - Updated for integrated setup
 app.use(cors({
-  origin: true, // Allow all origins for now
+  origin: [
+    'http://localhost:4200',  // Local development
+    'http://localhost:3000',  // Same origin (integrated)
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Logging middleware
-app.use(morgan('dev'));
+app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 🔧 CRITICAL FIX: Static files MUST come BEFORE catch-all route
-const publicPath = path.join(__dirname, '..', 'public');
-console.log('📁 Static files path:', publicPath);
-
-// Enhanced static file serving with detailed MIME type handling
-app.use(express.static(publicPath, {
-  maxAge: '0', // Disable caching during development
-  etag: false,
-  index: false, // Don't auto-serve index.html from static middleware
-  setHeaders: (res, filePath) => {
-    console.log('📄 Serving static file:', filePath);
-    
-    if (filePath.endsWith('.js')) {
-      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-      console.log('⚡ Set JS MIME type for:', path.basename(filePath));
-    } else if (filePath.endsWith('.css')) {
-      res.setHeader('Content-Type', 'text/css; charset=utf-8');
-      console.log('🎨 Set CSS MIME type for:', path.basename(filePath));
-    } else if (filePath.endsWith('.html')) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    } else if (filePath.endsWith('.json')) {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    }
-    
-    // Prevent caching issues
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-  }
+// Serve static files from public directory (Angular app)
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1d',
+  etag: false
 }));
-
-// 🔧 SPECIFIC: Handle JS files explicitly before catch-all
-app.get('*.js', (req, res, next) => {
-  const jsPath = path.join(publicPath, req.path);
-  console.log('🔍 JS file requested:', req.path);
-  console.log('🔍 Looking for:', jsPath);
-  console.log('🔍 File exists:', fs.existsSync(jsPath));
-  
-  if (fs.existsSync(jsPath)) {
-    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.sendFile(jsPath);
-  } else {
-    console.log('❌ JS file not found:', jsPath);
-    res.status(404).send('JavaScript file not found');
-  }
-});
-
-// 🔧 SPECIFIC: Handle CSS files explicitly
-app.get('*.css', (req, res, next) => {
-  const cssPath = path.join(publicPath, req.path);
-  console.log('🎨 CSS file requested:', req.path);
-  
-  if (fs.existsSync(cssPath)) {
-    res.setHeader('Content-Type', 'text/css; charset=utf-8');
-    res.sendFile(cssPath);
-  } else {
-    console.log('❌ CSS file not found:', cssPath);
-    res.status(404).send('CSS file not found');
-  }
-});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -110,7 +63,27 @@ app.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    message: 'Maraude Tracker API is running'
+    message: 'Maraude Tracker API is running',
+    frontend: 'Integrated Angular App'
+  });
+});
+
+// API info endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    message: 'Maraude Tracker API - Weekly Recurring Maraudes',
+    version: '2.0.0',
+    features: ['Weekly recurring schedules', 'Bordeaux locations', 'Real-time status', 'Integrated Frontend'],
+    endpoints: {
+      health: '/health',
+      auth: '/api/auth',
+      associations: '/api/associations',
+      maraudes: '/api/maraudes',
+      weeklySchedule: '/api/maraudes/weekly-schedule',
+      todayActive: '/api/maraudes/today/active',
+      merchants: '/api/merchants',
+      users: '/api/users'
+    }
   });
 });
 
@@ -122,117 +95,136 @@ app.use('/api/merchants', merchantRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
 
-// API info endpoint
-app.get('/api', (req, res) => {
-  res.json({
-    message: 'Maraude Tracker API',
-    version: '1.0.0',
-    endpoints: {
-      auth: '/api/auth',
-      associations: '/api/associations',
-      maraudes: '/api/maraudes',
-      merchants: '/api/merchants',
-      users: '/api/users',
-      reports: '/api/reports'
+// 404 handler for API routes only
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    error: 'API endpoint not found',
+    path: req.originalUrl,
+    availableEndpoints: [
+      '/api/associations',
+      '/api/maraudes',
+      '/api/maraudes/today/active',
+      '/api/maraudes/weekly-schedule',
+      '/api/merchants',
+      '/api/users',
+      '/api/auth'
+    ]
+  });
+});
+
+// Handle Angular routing - serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  // Don't serve Angular app for API routes
+  if (req.originalUrl.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      console.error('Error serving index.html:', err);
+      res.status(500).json({ 
+        error: 'Frontend not found',
+        message: 'Please build and copy your Angular app to the public folder',
+        instructions: [
+          '1. Build your Angular app: ng build --configuration=production',
+          '2. Copy dist/browser/* to public/ folder',
+          '3. Restart the server'
+        ]
+      });
     }
   });
 });
 
-// 🔧 CRITICAL: Catch-all for SPA routing MUST be LAST
-app.get('*', (req, res) => {
-  console.log('🌐 Catch-all route hit for:', req.path);
-  
-  // Don't serve index.html for API routes
-  if (req.path.startsWith('/api/')) {
-    console.log('❌ API route not found:', req.path);
-    return res.status(404).json({ error: 'API endpoint not found' });
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+
+  // Sequelize validation errors
+  if (err.name === 'SequelizeValidationError') {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: err.errors.map(e => ({
+        field: e.path,
+        message: e.message
+      }))
+    });
   }
-  
-  // Don't serve index.html for asset files
-  if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
-    console.log('❌ Asset file not found:', req.path);
-    return res.status(404).send('Asset not found');
+
+  // Sequelize unique constraint errors
+  if (err.name === 'SequelizeUniqueConstraintError') {
+    return res.status(409).json({
+      error: 'Resource already exists',
+      details: err.errors.map(e => ({
+        field: e.path,
+        message: e.message
+      }))
+    });
   }
-  
-  const indexPath = path.join(publicPath, 'index.html');
-  console.log('📄 Serving index.html for SPA route:', req.path);
-  
-  if (fs.existsSync(indexPath)) {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.sendFile(indexPath);
-  } else {
-    console.log('❌ index.html not found at:', indexPath);
-    res.status(404).send(`
-      <h1>Frontend not found</h1>
-      <p>The Angular build files are missing.</p>
-      <p>Expected path: ${indexPath}</p>
-    `);
+
+  // JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({
+      error: 'Invalid token'
+    });
   }
+
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      error: 'Token expired'
+    });
+  }
+
+  // Default error
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === 'development' 
+      ? err.message 
+      : 'Internal server error'
+  });
 });
-
-// Debug function
-async function checkFileSystem() {
-  const indexPath = path.join(publicPath, 'index.html');
-
-  console.log('🔍 File system check:');
-  console.log('📂 Public directory:', publicPath);
-  console.log('📄 Index path:', indexPath);
-  console.log('📁 Public exists:', fs.existsSync(publicPath));
-  console.log('📄 Index exists:', fs.existsSync(indexPath));
-
-  if (fs.existsSync(publicPath)) {
-    try {
-      const files = fs.readdirSync(publicPath);
-      console.log('📋 All files in public/:');
-      files.forEach(file => {
-        const filePath = path.join(publicPath, file);
-        const stats = fs.statSync(filePath);
-        console.log(`   ${file} (${stats.size} bytes)`);
-      });
-      
-      const cssFiles = files.filter(f => f.endsWith('.css'));
-      const jsFiles = files.filter(f => f.endsWith('.js'));
-      console.log('🎨 CSS files:', cssFiles);
-      console.log('⚡ JS files:', jsFiles);
-      
-    } catch (error) {
-      console.log('❌ Error reading public/', error.message);
-    }
-  }
-  console.log('==========================================');
-}
 
 // Start server
 async function startServer() {
   try {
+    // Test database connection
     await testConnection();
-    await sequelize.authenticate();
-    console.log('✅ Database connected');
 
-    await checkFileSystem();
+    // Just authenticate to ensure connection works
+    await sequelize.authenticate();
+    console.log('✅ Database connection verified');
+    console.log('📊 Using manually created schema with weekly maraudes');
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+      console.log(`🚀 Maraude Tracker Full Stack Server Started`);
+      console.log(`📍 Server running on http://localhost:${PORT}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🗺️  Bordeaux Weekly Maraudes System - Integrated Frontend + Backend`);
       console.log(`📱 Frontend: http://localhost:${PORT}/`);
-      console.log(`🔗 API: http://localhost:${PORT}/api`);
+      console.log(`🔗 API Test endpoints:`);
+      console.log(`   - http://localhost:${PORT}/api`);
+      console.log(`   - http://localhost:${PORT}/api/associations`);
+      console.log(`   - http://localhost:${PORT}/api/maraudes/today/active`);
+      console.log(`   - http://localhost:${PORT}/api/maraudes/weekly-schedule`);
+      console.log(`   - http://localhost:${PORT}/api/merchants`);
       console.log('==================================================');
+      console.log(`💡 To add frontend: Copy your Angular build to ./public/`);
     });
 
   } catch (error) {
-    console.error('❌ Server start failed:', error);
+    console.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Shutting down...');
+  console.log('\n🛑 Shutting down server...');
   await sequelize.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Shutting down...');
+  console.log('\n🛑 Shutting down server...');
   await sequelize.close();
   process.exit(0);
 });
