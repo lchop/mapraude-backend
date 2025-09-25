@@ -16,6 +16,8 @@ const merchantRoutes = require('./routes/merchants');
 const userRoutes = require('./routes/users');
 const reportRoutes = require('./routes/reports');
 
+
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -71,6 +73,17 @@ app.use('/api/maraudes', maraudeRoutes);
 app.use('/api/merchants', merchantRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('*', (req, res) => {
+  // Ne pas intercepter les routes API
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  
+  // Servir index.html pour toutes les autres routes
+  res.sendFile(path.join(__dirname, 'public/index.html'));
+});
 
 
 // 404 handler

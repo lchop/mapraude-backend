@@ -907,4 +907,86 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Dans src/routes/reports.js, AJOUTER cet endpoint après les autres routes
+
+// GET /api/reports/dashboard/stats - Get dashboard statistics for current user
+router.get('/dashboard/stats', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const associationId = req.user.associationId;
+
+    console.log(`Getting dashboard stats for user ${userId} from association ${associationId}`);
+
+    // Get user's maraudes
+    const userMaraudes = await MaraudeAction.findAll({
+      where: { createdBy: userId },
+      attributes: ['id', 'status', 'beneficiariesHelped']
+    });
+
+    // Get reports for user's maraudes OR reports created by user
+    const userReports = await MaraudeReport.findAll({
+      where: {
+        [Op.or]: [
+          { createdBy: userId }, // Reports created by this user
+          { '$maraudeAction.createdBy$': userId } // Reports for maraudes created by this user
+        ]
+      },
+      include: [
+        {
+          model: MaraudeAction,
+          as: 'maraudeAction',
+          attributes: ['id', 'title', 'createdBy']
+        }
+      ],
+      attributes: [
+        'id', 'beneficiariesCount', 'volunteersCount', 
+        'status', 'reportDate', 'maraudeActionId', 'createdBy'
+      ]
+    });
+
+    console.log(`Found ${userMaraudes.length} maraudes and ${userReports.length} reports`);
+
+    // Calculate statistics
+    const stats = {
+      // Maraudes stats
+      totalMaraudes: userMaraudes.length,
+      completedMaraudes: userMaraudes.filter(m => m.status === 'completed').length,
+      activeMaraudes: userMaraudes.filter(m => 
+        m.status === 'planned' || m.status === 'in_progress'
+      ).length,
+
+      // Beneficiaries stats (from reports only - this is the KEY fix!)
+      totalBeneficiaries: userReports.reduce((sum, report) => 
+        sum + (report.beneficiariesCount || 0), 0
+      ),
+      
+      // Reports stats
+      totalReports: userReports.length,
+      validatedReports: userReports.filter(r => r.status === 'validated').length,
+      pendingReports: userReports.filter(r => r.status === 'submitted').length,
+      draftReports: userReports.filter(r => r.status === 'draft').length,
+
+      // Average beneficiaries per report
+      avgBeneficiariesPerReport: userReports.length > 0 ? 
+        Math.round(userReports.reduce((sum, r) => sum + r.beneficiariesCount, 0) / userReports.length) : 0,
+
+      // Total volunteers involved across all reports
+      totalVolunteers: userReports.reduce((sum, report) => 
+        sum + (report.volunteersCount || 0), 0
+      )
+    };
+
+    console.log('Calculated stats:', stats);
+
+    res.json({ stats });
+
+  } catch (error) {
+    console.error('Get dashboard stats error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch dashboard statistics',
+      details: error.message 
+    });
+  }
+});
+
 module.exports = router;
