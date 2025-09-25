@@ -4,7 +4,7 @@ require('dotenv').config();
 // Railway PostgreSQL configuration with better error handling
 const sequelize = new Sequelize(
   process.env.DATABASE_URL || {
-    database: process.env.DB_NAME || 'maraude_tracker',
+    database: process.env.PG_NAME || 'maraude_tracker',
     username: process.env.DB_USERNAME || 'postgres',
     password: process.env.DB_PASSWORD || '',
     host: process.env.DB_HOST || 'localhost',
