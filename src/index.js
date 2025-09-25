@@ -1,4 +1,3 @@
-// src/index.js - Updated server file
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,18 +16,22 @@ const merchantRoutes = require('./routes/merchants');
 const userRoutes = require('./routes/users');
 const reportRoutes = require('./routes/reports');
 
-
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration - Updated for separate frontend service
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:4200',
-  credentials: true
+  origin: [
+    'http://localhost:4200',  // Local development
+    'https://your-frontend-service.railway.app',  // 👈 Replace with your actual frontend Railway URL
+    process.env.FRONTEND_URL
+  ].filter(Boolean), // Remove any undefined values
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Logging middleware
@@ -75,22 +78,19 @@ app.use('/api/merchants', merchantRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => {
-  // Ne pas intercepter les routes API
-  if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ error: 'API endpoint not found' });
-  }
-  
-  // Servir index.html pour toutes les autres routes
-  res.sendFile(path.join(__dirname, 'public/index.html'));
-});
+// REMOVED: Static file serving (since we'll have separate frontend service)
+// app.use(express.static(path.join(__dirname, 'public')));
+// app.get('*', (req, res) => {
+//   if (req.path.startsWith('/api/')) {
+//     return res.status(404).json({ error: 'API endpoint not found' });
+//   }
+//   res.sendFile(path.join(__dirname, 'public/index.html'));
+// });
 
-
-// 404 handler
-app.use('*', (req, res) => {
+// 404 handler for API routes only
+app.use('/api/*', (req, res) => {
   res.status(404).json({
-    error: 'Route not found',
+    error: 'API endpoint not found',
     path: req.originalUrl,
     availableEndpoints: [
       '/api/associations',
@@ -98,15 +98,29 @@ app.use('*', (req, res) => {
       '/api/maraudes/today/active',
       '/api/maraudes/weekly-schedule',
       '/api/merchants',
-      '/api/auth/login'
+      '/api/users',
+      '/api/auth'
     ]
+  });
+});
+
+// Catch all non-API routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    error: 'This is an API server. Frontend should be accessed separately.',
+    message: 'Visit your frontend Railway service URL to access the application',
+    api: {
+      health: '/health',
+      docs: '/',
+      endpoints: '/api/*'
+    }
   });
 });
 
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  
+
   // Sequelize validation errors
   if (err.name === 'SequelizeValidationError') {
     return res.status(400).json({
@@ -117,7 +131,7 @@ app.use((err, req, res, next) => {
       }))
     });
   }
-  
+
   // Sequelize unique constraint errors
   if (err.name === 'SequelizeUniqueConstraintError') {
     return res.status(409).json({
@@ -128,20 +142,20 @@ app.use((err, req, res, next) => {
       }))
     });
   }
-  
+
   // JWT errors
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
       error: 'Invalid token'
     });
   }
-  
+
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       error: 'Token expired'
     });
   }
-  
+
   // Default error
   res.status(err.status || 500).json({
     error: process.env.NODE_ENV === 'development' 
@@ -155,26 +169,26 @@ async function startServer() {
   try {
     // Test database connection
     await testConnection();
-    
-    // REMOVED: No automatic sync since we manually created the schema
+
     // Just authenticate to ensure connection works
     await sequelize.authenticate();
     console.log('✅ Database connection verified');
     console.log('📊 Using manually created schema with weekly maraudes');
-    
+
     app.listen(PORT, () => {
       console.log(`🚀 Maraude Tracker API Server Started`);
       console.log(`📍 Server running on http://localhost:${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🗺️  Bordeaux Weekly Maraudes System Active`);
-      console.log(`🔗 Test endpoints:`);
+      console.log(`🗺️  Bordeaux Weekly Maraudes System - Backend Only`);
+      console.log(`📱 Frontend should be deployed as separate Railway service`);
+      console.log(`🔗 API Test endpoints:`);
       console.log(`   - http://localhost:${PORT}/api/associations`);
       console.log(`   - http://localhost:${PORT}/api/maraudes/today/active`);
       console.log(`   - http://localhost:${PORT}/api/maraudes/weekly-schedule`);
       console.log(`   - http://localhost:${PORT}/api/merchants`);
       console.log('==================================================');
     });
-    
+
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
