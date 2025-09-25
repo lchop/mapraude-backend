@@ -19,17 +19,22 @@ const reportRoutes = require('./routes/reports');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Security middleware - Updated for integrated frontend
+// 🔧 FIXED: Updated Security middleware for Angular
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-eval'"], // Angular needs unsafe-eval
-      imgSrc: ["'self'", "data:", "https:"],
-      fontSrc: ["'self'", "https:", "data:"]
+      styleSrc: ["'self'", "'unsafe-inline'", "https:", "data:"],
+      scriptSrc: ["'self'", "'unsafe-eval'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      fontSrc: ["'self'", "https:", "data:"],
+      connectSrc: ["'self'", "https:", "wss:", "ws:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'self'"]
     }
-  }
+  },
+  crossOriginEmbedderPolicy: false
 }));
 
 // CORS configuration - Updated for integrated setup
@@ -51,11 +56,21 @@ app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 🔧 FIXED: Serve static files from public directory (Angular app)
-// Go up one level from src/ to find public/
+// 🔧 FIXED: Enhanced static file serving with proper headers
 app.use(express.static(path.join(__dirname, '..', 'public'), {
-  maxAge: '1d',
-  etag: false
+  maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+  etag: false,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    }
+    if (filePath.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    }
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Content-Type', 'text/html');
+    }
+  }
 }));
 
 // Health check endpoint
@@ -113,33 +128,27 @@ app.use('/api/*', (req, res) => {
   });
 });
 
-// 🔧 FIXED: Handle Angular routing - serve index.html for all non-API routes
+// 🔧 FIXED: Handle Angular routing with better error handling
 app.get('*', (req, res) => {
-  // Don't serve Angular app for API routes
   if (req.originalUrl.startsWith('/api/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
 
-  // ✅ FIXED: Go up one level from src/ to find public/index.html
   const indexPath = path.join(__dirname, '..', 'public', 'index.html');
-  
+
   console.log('🔍 Serving frontend for:', req.originalUrl);
   console.log('📁 Looking for index.html at:', indexPath);
-  
+
   res.sendFile(indexPath, (err) => {
     if (err) {
       console.error('❌ Error serving index.html:', err);
       res.status(500).json({ 
         error: 'Frontend not found',
         message: 'Please build and copy your Angular app to the public folder',
-        debug: {
-          indexPath: indexPath,
-          currentDir: __dirname,
-          error: err.message
-        },
+        indexPath: indexPath,
         instructions: [
-          '1. Build your Angular app: ng build --configuration=production',
-          '2. Copy dist/browser/* to public/ folder',
+          '1. ng build --configuration=production --base-href=/',
+          '2. cp -r dist/your-app-name/* public/',
           '3. Restart the server'
         ]
       });
@@ -149,7 +158,7 @@ app.get('*', (req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  console.error('❌ Global error handler:', err);
 
   // Sequelize validation errors
   if (err.name === 'SequelizeValidationError') {
@@ -199,23 +208,30 @@ async function checkFileSystem() {
   const fs = require('fs');
   const publicDir = path.join(__dirname, '..', 'public');
   const indexPath = path.join(publicDir, 'index.html');
-  
+
   console.log('🔍 File system check:');
   console.log('📂 Current __dirname:', __dirname);
   console.log('📁 Public directory path:', publicDir);
   console.log('📄 Index file path:', indexPath);
   console.log('📁 Public dir exists:', fs.existsSync(publicDir));
   console.log('📄 Index.html exists:', fs.existsSync(indexPath));
-  
+
   if (fs.existsSync(publicDir)) {
     try {
       const files = fs.readdirSync(publicDir);
       console.log('📋 Files in public/:', files.slice(0, 10)); // Show first 10 files
+      
+      // Check for specific Angular files
+      const cssFiles = files.filter(f => f.endsWith('.css'));
+      const jsFiles = files.filter(f => f.endsWith('.js'));
+      console.log('🎨 CSS files:', cssFiles);
+      console.log('📜 JS files:', jsFiles);
+      
     } catch (error) {
       console.log('❌ Error reading public directory:', error.message);
     }
   }
-  
+
   console.log('==========================================');
 }
 
@@ -247,6 +263,11 @@ async function startServer() {
       console.log(`   - http://localhost:${PORT}/api/merchants`);
       console.log('==================================================');
       console.log(`💡 Frontend files should be in: ${path.join(__dirname, '..', 'public')}`);
+      console.log(`🔧 If styles are not loading, check:`);
+      console.log(`   1. Angular build completed successfully`);
+      console.log(`   2. All files copied to public/ folder`);
+      console.log(`   3. CSS files have .css extension`);
+      console.log(`   4. No CSP errors in browser console`);
     });
 
   } catch (error) {
