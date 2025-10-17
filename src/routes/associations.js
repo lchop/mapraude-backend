@@ -1,3 +1,54 @@
+const express = require('express');
+const { Association, User, MaraudeAction } = require('../models');
+const { authenticateToken, requireRole } = require('../middleware/auth');
+
+const router = express.Router();
+
+// GET /api/associations - Get all associations (public)
+router.get('/', async (req, res) => {
+  try {
+    const { page = 1, limit = 10, active = 'true', search } = req.query;
+    const offset = (page - 1) * limit;
+
+    const whereClause = {};
+    if (active !== 'all') {
+      whereClause.isActive = active === 'true';
+    }
+
+    if (search) {
+      whereClause[Op.or] = [
+        { name: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+
+    const { count, rows: associations } = await Association.findAndCountAll({
+      where: whereClause,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['name', 'ASC']],
+      attributes: ['id', 'name', 'description', 'email', 'phone', 'address', 'website', 'isActive', 'createdAt']
+    });
+
+    res.json({
+      associations,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        pages: Math.ceil(count / limit),
+        limit: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get associations error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch associations',
+      message: error.message 
+    });
+  }
+});
+
 // POST /api/associations - Create new association
 router.post('/', async (req, res) => {
   try {
@@ -111,3 +162,139 @@ router.post('/', async (req, res) => {
     });
   }
 });
+
+// GET /api/associations/:id - Get specific association (public)
+router.get('/:id', async (req, res) => {
+  try {
+    const association = await Association.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'description', 'email', 'phone', 'address', 'website', 'isActive', 'createdAt']
+    });
+
+    if (!association) {
+      return res.status(404).json({ error: 'Association not found' });
+    }
+
+    res.json({ association });
+
+  } catch (error) {
+    console.error('Get association error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch association',
+      message: error.message 
+    });
+  }
+});
+
+// PUT /api/associations/:id - Update association (authenticated, same association or admin)
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const association = await Association.findByPk(req.params.id);
+
+    if (!association) {
+      return res.status(404).json({ error: 'Association not found' });
+    }
+
+    // Check if user belongs to this association (unless admin)
+    if (req.user.role !== 'admin' && req.user.associationId !== association.id) {
+      return res.status(403).json({ 
+        error: 'Access denied - different association' 
+      });
+    }
+
+    const {
+      name,
+      description,
+      email,
+      phone,
+      address,
+      website,
+      isActive
+    } = req.body;
+
+    // Only admins can change isActive status
+    const updateData = {
+      name,
+      description,
+      email,
+      phone,
+      address,
+      website
+    };
+
+    if (req.user.role === 'admin' && typeof isActive === 'boolean') {
+      updateData.isActive = isActive;
+    }
+
+    await association.update(updateData);
+
+    res.json({
+      message: 'Association updated successfully',
+      association
+    });
+
+  } catch (error) {
+    console.error('Update association error:', error);
+    res.status(400).json({ 
+      error: 'Failed to update association',
+      details: error.message 
+    });
+  }
+});
+
+// GET /api/associations/:id/stats - Get association statistics
+router.get('/:id/stats', authenticateToken, async (req, res) => {
+  try {
+    const associationId = req.params.id;
+
+    // Check if user belongs to this association (unless admin)
+    if (req.user.role !== 'admin' && req.user.associationId !== associationId) {
+      return res.status(403).json({ 
+        error: 'Access denied - different association' 
+      });
+    }
+
+    const association = await Association.findByPk(associationId);
+    if (!association) {
+      return res.status(404).json({ error: 'Association not found' });
+    }
+
+    // Get statistics
+    const [
+      totalUsers,
+      activeUsers,
+      totalActions,
+      completedActions,
+      plannedActions
+    ] = await Promise.all([
+      User.count({ where: { associationId } }),
+      User.count({ where: { associationId, isActive: true } }),
+      MaraudeAction.count({ where: { associationId } }),
+      MaraudeAction.count({ where: { associationId, status: 'completed' } }),
+      MaraudeAction.count({ where: { associationId, status: 'planned' } })
+    ]);
+
+    res.json({
+      stats: {
+        users: {
+          total: totalUsers,
+          active: activeUsers
+        },
+        actions: {
+          total: totalActions,
+          completed: completedActions,
+          planned: plannedActions,
+          in_progress: totalActions - completedActions - plannedActions
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get association stats error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch association statistics',
+      details: error.message 
+    });
+  }
+});
+
+module.exports = router;
