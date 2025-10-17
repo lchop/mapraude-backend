@@ -1,4 +1,4 @@
-// src/routes/maraudes.js - Fixed route order
+// src/routes/maraudes.js - Fixed route order with admin association support
 const express = require('express');
 const { Op } = require('sequelize');
 const { MaraudeAction, Association, User } = require('../models');
@@ -245,11 +245,12 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
-  console.log('POST /api/maraudes called');
-  console.log('User from token:', req.user);
-  console.log('Request body:', req.body);
-  
+// POST /api/maraudes - Create new maraude action (FIXED FOR ADMIN ASSOCIATION)
+router.post('/', authenticateToken, requireRole('coordinator', 'admin'), async (req, res) => {
+  console.log('📝 POST /api/maraudes - Create request');
+  console.log('👤 User:', { id: req.user.id, role: req.user.role, associationId: req.user.associationId });
+  console.log('📦 Body:', req.body);
+
   try {
     const {
       title,
@@ -267,10 +268,17 @@ router.post('/', authenticateToken, async (req, res) => {
       startTime,
       endTime,
       participantsCount,
-      notes
+      notes,
+      associationId // NEW: Association ID from request body
     } = req.body;
 
     // Validation
+    if (!title || startLatitude === undefined || startLongitude === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: title, startLatitude, startLongitude' 
+      });
+    }
+
     if (isRecurring && (dayOfWeek === null || dayOfWeek === undefined)) {
       return res.status(400).json({ 
         error: 'dayOfWeek is required for recurring maraudes' 
@@ -283,20 +291,72 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    if (!startLatitude || !startLongitude) {
-      return res.status(400).json({
-        error: 'Starting coordinates (startLatitude/startLongitude) are required'
+    // ============================================
+    // NEW: Determine which associationId to use
+    // ============================================
+    let targetAssociationId;
+    
+    if (req.user.role === 'admin') {
+      // Admin can specify association OR use their own
+      if (associationId) {
+        // Verify the association exists
+        const associationExists = await Association.findByPk(associationId);
+        
+        if (!associationExists) {
+          return res.status(400).json({ 
+            error: 'Association not found' 
+          });
+        }
+        
+        targetAssociationId = associationId;
+        console.log('✅ Admin selected association:', targetAssociationId);
+      } else {
+        // If admin doesn't specify, use their own (if they have one)
+        targetAssociationId = req.user.associationId;
+        console.log('ℹ️ Admin using own association:', targetAssociationId);
+      }
+    } else {
+      // Non-admin users MUST use their own association
+      if (!req.user.associationId) {
+        return res.status(400).json({ 
+          error: 'User must be associated with an organization' 
+        });
+      }
+      
+      targetAssociationId = req.user.associationId;
+      console.log('👤 User using own association:', targetAssociationId);
+    }
+
+    // Validate associationId is present
+    if (!targetAssociationId) {
+      return res.status(400).json({ 
+        error: 'Association ID is required' 
       });
     }
 
-    // Clean data for database - NEW FIELDS ONLY
+    // Prepare waypoints
+    let parsedWaypoints = [];
+    if (waypoints) {
+      try {
+        parsedWaypoints = typeof waypoints === 'string' ? JSON.parse(waypoints) : waypoints;
+        if (!Array.isArray(parsedWaypoints)) {
+          parsedWaypoints = [];
+        }
+        console.log('📍 Parsed waypoints:', parsedWaypoints.length, 'points');
+      } catch (error) {
+        console.error('⚠️ Error parsing waypoints:', error);
+        parsedWaypoints = [];
+      }
+    }
+
+    // Clean data for database
     const cleanData = {
       title,
-      description: description && description.trim() !== '' ? description : null,
+      description: description?.trim() || null,
       startLatitude,
       startLongitude,
-      startAddress: startAddress && startAddress.trim() !== '' ? startAddress : null,
-      waypoints: waypoints || [],
+      startAddress: startAddress?.trim() || null,
+      waypoints: parsedWaypoints,
       estimatedDistance: estimatedDistance || null,
       estimatedDuration: estimatedDuration || null,
       routePolyline: routePolyline || null,
@@ -304,16 +364,16 @@ router.post('/', authenticateToken, async (req, res) => {
       isRecurring,
       scheduledDate: !isRecurring ? scheduledDate : null,
       startTime,
-      endTime: endTime && endTime.trim() !== '' ? endTime : null,
+      endTime: endTime?.trim() || null,
       participantsCount: participantsCount || 0,
-      notes: notes && notes.trim() !== '' ? notes : null,
+      notes: notes?.trim() || null,
       createdBy: req.user.id,
-      associationId: req.user.associationId,
+      associationId: targetAssociationId, // Use the determined association ID
       status: 'planned',
       isActive: true
     };
 
-    console.log('Cleaned data for database:', cleanData);
+    console.log('💾 Creating with data:', cleanData);
 
     const action = await MaraudeAction.create(cleanData);
 
@@ -322,7 +382,7 @@ router.post('/', authenticateToken, async (req, res) => {
         {
           model: Association,
           as: 'association',
-          attributes: ['id', 'name']
+          attributes: ['id', 'name', 'email']
         },
         {
           model: User,
@@ -338,13 +398,15 @@ router.post('/', authenticateToken, async (req, res) => {
     actionData.dayName = createdAction.getDayName();
     actionData.isHappeningToday = createdAction.isHappeningToday();
 
+    console.log('✅ Maraude created successfully with association:', actionData.associationId);
+
     res.status(201).json({
       message: 'Maraude action created successfully',
       action: actionData
     });
 
   } catch (error) {
-    console.error('Create maraude error:', error);
+    console.error('❌ Create maraude error:', error);
     res.status(400).json({ 
       error: 'Failed to create maraude action',
       details: error.message 
@@ -352,11 +414,12 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// PUT /api/maraudes/:id - Update maraude action (FIXED for waypoints)
+// PUT /api/maraudes/:id - Update maraude action (FIXED for admin association)
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
-    console.log('🔄 PUT /api/maraudes/:id - Update request received');
-    console.log('📦 Request body:', req.body);
+    console.log('🔄 PUT /api/maraudes/:id - Update request');
+    console.log('👤 User:', { id: req.user.id, role: req.user.role });
+    console.log('📦 Body:', req.body);
 
     const action = await MaraudeAction.findByPk(req.params.id);
 
@@ -364,10 +427,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Maraude action not found' });
     }
 
+    // Check permissions
     const canEdit = (
       action.createdBy === req.user.id ||
       (req.user.associationId === action.associationId && 
-       ['coordinator', 'admin'].includes(req.user.role))
+       ['coordinator', 'admin'].includes(req.user.role)) ||
+      req.user.role === 'admin' // Admin can edit any maraude
     );
 
     if (!canEdit) {
@@ -376,21 +441,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     const {
       title, description, 
-      // OLD fields for backward compatibility
-      latitude, longitude, address, 
-      // NEW route planning fields
       startLatitude, startLongitude, startAddress, waypoints,
       estimatedDistance, estimatedDuration, routePolyline,
-      // Scheduling fields
       dayOfWeek, isRecurring, scheduledDate, startTime, endTime, 
-      // Status and tracking
       status, participantsCount, beneficiariesHelped, materialsDistributed,
-      notes, isActive
+      notes, isActive,
+      associationId // NEW: Allow admin to change association
     } = req.body;
 
-    console.log('🎯 PUT Update - Received waypoints:', waypoints);
-    console.log('📊 PUT Update - Waypoints count:', waypoints?.length || 0);
-
+    // Validation
     if (isRecurring !== undefined && isRecurring && (dayOfWeek === null || dayOfWeek === undefined)) {
       return res.status(400).json({ 
         error: 'dayOfWeek is required for recurring maraudes' 
@@ -403,7 +462,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    // Build update data object carefully
+    // Build update data object
     const updateData = {};
 
     // Basic fields
@@ -417,22 +476,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (beneficiariesHelped !== undefined) updateData.beneficiariesHelped = beneficiariesHelped;
     if (materialsDistributed !== undefined) updateData.materialsDistributed = materialsDistributed;
 
-    // NEW route planning fields - CRITICAL: These need to be updated
+    // Route planning fields
     if (startLatitude !== undefined) updateData.startLatitude = startLatitude;
     if (startLongitude !== undefined) updateData.startLongitude = startLongitude;
     if (startAddress !== undefined) updateData.startAddress = startAddress;
-    if (waypoints !== undefined) {
-      updateData.waypoints = waypoints;
-      console.log('✅ PUT Update - Setting waypoints to:', waypoints);
-    }
+    if (waypoints !== undefined) updateData.waypoints = waypoints;
     if (estimatedDistance !== undefined) updateData.estimatedDistance = estimatedDistance;
     if (estimatedDuration !== undefined) updateData.estimatedDuration = estimatedDuration;
     if (routePolyline !== undefined) updateData.routePolyline = routePolyline;
-
-    // Backward compatibility fields
-    if (latitude !== undefined) updateData.latitude = latitude;
-    if (longitude !== undefined) updateData.longitude = longitude;
-    if (address !== undefined) updateData.address = address;
 
     // Scheduling updates
     if (isRecurring !== undefined) {
@@ -441,22 +492,33 @@ router.put('/:id', authenticateToken, async (req, res) => {
       updateData.scheduledDate = !isRecurring ? scheduledDate : null;
     }
 
-    if (isActive !== undefined) {
-      updateData.isActive = isActive;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    // NEW: Allow admin to change association
+    if (associationId !== undefined && req.user.role === 'admin') {
+      // Verify the association exists
+      const associationExists = await Association.findByPk(associationId);
+      
+      if (!associationExists) {
+        return res.status(400).json({ 
+          error: 'Association not found' 
+        });
+      }
+      
+      updateData.associationId = associationId;
+      console.log('✅ Admin changing association to:', associationId);
     }
 
-    console.log('🔧 PUT Update - Final updateData being applied:', updateData);
+    console.log('🔧 Applying update:', updateData);
 
-    // Apply the update
     await action.update(updateData);
 
-    // Fetch the updated action with associations
     const updatedAction = await MaraudeAction.findByPk(action.id, {
       include: [
         {
           model: Association,
           as: 'association',
-          attributes: ['id', 'name']
+          attributes: ['id', 'name', 'email']
         },
         {
           model: User,
@@ -466,14 +528,12 @@ router.put('/:id', authenticateToken, async (req, res) => {
       ]
     });
 
-    // Add computed fields
     const actionData = updatedAction.toJSON();
     actionData.nextOccurrence = updatedAction.getNextOccurrence();
     actionData.dayName = updatedAction.getDayName();
     actionData.isHappeningToday = updatedAction.isHappeningToday();
 
-    console.log('✅ PUT Update - Response waypoints:', actionData.waypoints);
-    console.log('📊 PUT Update - Response waypoints count:', actionData.waypoints?.length || 0);
+    console.log('✅ Maraude updated successfully');
 
     res.json({
       message: 'Maraude action updated successfully',
