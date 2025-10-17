@@ -22,25 +22,43 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       unique: true,
       validate: {
-        isEmail: true
+        isEmail: true,
+        notEmpty: true
       }
     },
     phone: {
       type: DataTypes.STRING,
-      allowNull: true,
+      allowNull: true,  // ✅ Optionnel
       validate: {
-        len: [10, 20]
+        len: {
+          args: [10, 20],
+          msg: 'Phone must be between 10 and 20 characters'
+        },
+        // ✅ Validation conditionnelle : valider seulement si rempli
+        isValidPhone(value) {
+          if (value && value.trim() !== '' && value.length < 10) {
+            throw new Error('Phone must be at least 10 characters');
+          }
+        }
       }
     },
     address: {
       type: DataTypes.TEXT,
-      allowNull: true
+      allowNull: true  // ✅ Optionnel
     },
     website: {
       type: DataTypes.STRING,
-      allowNull: true,
+      allowNull: true,  // ✅ Optionnel
       validate: {
-        isUrl: true
+        // ✅ Validation conditionnelle : valider seulement si rempli
+        isValidUrl(value) {
+          if (value && value.trim() !== '') {
+            const urlPattern = /^https?:\/\/.+\..+/i;
+            if (!urlPattern.test(value)) {
+              throw new Error('Website must be a valid URL (http:// or https://)');
+            }
+          }
+        }
       }
     },
     isActive: {
@@ -58,7 +76,7 @@ module.exports = (sequelize, DataTypes) => {
       foreignKey: 'associationId',
       as: 'users'
     });
-    
+
     // An association has many maraude actions
     Association.hasMany(models.MaraudeAction, {
       foreignKey: 'associationId',
